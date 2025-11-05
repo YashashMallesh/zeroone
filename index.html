@@ -1,0 +1,309 @@
+<!--
+BudgetBuddy — Single-file React app (no build tools)
+Instructions:
+1. Save this entire file as `index.html`.
+2. Open it in any modern browser. (It uses React + Babel from CDN.)
+
+Features:
+- Add income / expense entries (stored in localStorage)
+- Balance and totals by category
+- Monthly selector and simple monthly breakdown
+- Responsive, mobile-first dark theme UI
+- Edit/delete entries
+
+If you want this converted into a multi-file React project (Vite / CRA) or want deployment instructions, tell me and I'll generate it.
+-->
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BudgetBuddy — Simple Budget Tracker</title>
+    <style>
+      :root{
+        --bg:#0b1020; /* dark navy */
+        --card:#0f1724;
+        --muted:#9aa4b2;
+        --accent:#7dd3fc; /* cyan */
+        --accent-2:#60a5fa;
+        --success:#34d399;
+        --danger:#fb7185;
+        --glass: rgba(255,255,255,0.03);
+      }
+      *{box-sizing:border-box}
+      html,body,#root{height:100%}
+      body{
+        margin:0;font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+        background:linear-gradient(180deg,var(--bg),#071025); color:#e6eef6;
+        -webkit-font-smoothing:antialiased;
+      }
+      .app{
+        max-width:980px;margin:28px auto;padding:20px;display:grid;grid-template-columns:1fr 360px;gap:18px;
+      }
+      @media(max-width:880px){.app{grid-template-columns:1fr; padding:14px}}
+      .card{background:linear-gradient(180deg,var(--card), rgba(255,255,255,0.02));padding:16px;border-radius:12px;box-shadow:0 6px 18px rgba(2,6,23,0.6);}
+      header{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px}
+      h1{font-size:20px;margin:0}
+      .small{color:var(--muted);font-size:13px}
+
+      /* balance */
+      .balance{display:flex;flex-direction:column;gap:8px}
+      .balance-amount{font-size:28px;font-weight:700}
+      .row{display:flex;gap:12px;align-items:center}
+
+      /* form */
+      form{display:grid;grid-template-columns:1fr 120px;gap:10px;align-items:end}
+      label{font-size:13px;color:var(--muted)}
+      input,select{background:var(--glass);border:1px solid rgba(255,255,255,0.03);padding:10px;border-radius:8px;color:inherit}
+      .full{grid-column:1/-1}
+      .actions{display:flex;gap:8px}
+      button{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 12px;border-radius:8px;cursor:pointer;color:inherit}
+      button.primary{background:linear-gradient(90deg,var(--accent),var(--accent-2));border:none;color:#052027;font-weight:700}
+
+      /* list */
+      .entry{display:flex;justify-content:space-between;gap:12px;padding:10px;border-radius:10px;margin-bottom:8px;align-items:center}
+      .entry .meta{display:flex;flex-direction:column}
+      .amount{font-weight:700}
+      .amount.in{color:var(--success)}
+      .amount.out{color:var(--danger)}
+      .tag{font-size:12px;padding:4px 8px;border-radius:999px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.02)}
+
+      /* sidebar */
+      .sidebar{display:flex;flex-direction:column;gap:12px}
+      .totals{display:flex;gap:8px;flex-wrap:wrap}
+      .total-card{flex:1;min-width:140px;padding:12px;border-radius:10px;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent)}
+
+      footer{margin-top:14px;color:var(--muted);font-size:13px;text-align:center}
+
+      /* tiny controls */
+      .tiny{font-size:12px;padding:6px 8px}
+      .muted{color:var(--muted)}
+
+      /* empty */
+      .empty{padding:20px;text-align:center;color:var(--muted)}
+
+      /* hover */
+      .entry:hover{background:rgba(255,255,255,0.01)}
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!-- React + Babel from CDN for single-file ease -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+      const {useState, useEffect, useMemo} = React;
+
+      const LOCAL_KEY = 'budgetbuddy_v1_entries';
+
+      const SAMPLE_CATEGORIES = ['Salary','Groceries','Transport','Entertainment','Bills','Health','Other'];
+
+      function uid(){return Math.random().toString(36).slice(2,9)}
+
+      function loadEntries(){
+        try{const raw = localStorage.getItem(LOCAL_KEY); return raw? JSON.parse(raw): []}catch(e){return []}
+      }
+      function saveEntries(entries){ localStorage.setItem(LOCAL_KEY, JSON.stringify(entries)) }
+
+      function formatCurrency(n){
+        const sign = n<0 ? '-' : '';
+        const v = Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+        return sign + '₹' + v;
+      }
+
+      function App(){
+        const [entries, setEntries] = useState(loadEntries);
+        const [type, setType] = useState('expense');
+        const [amount, setAmount] = useState('');
+        const [category, setCategory] = useState(SAMPLE_CATEGORIES[0]);
+        const [note, setNote] = useState('');
+        const [date, setDate] = useState(()=> new Date().toISOString().slice(0,10));
+        const [queryMonth, setQueryMonth] = useState(()=> new Date().toISOString().slice(0,7));
+        const [editingId, setEditingId] = useState(null);
+
+        useEffect(()=>{ saveEntries(entries) },[entries]);
+
+        const filtered = useMemo(()=> entries.filter(e => e.date.slice(0,7) === queryMonth).sort((a,b)=> b.date.localeCompare(a.date)),[entries,queryMonth]);
+
+        const totals = useMemo(()=>{
+          const t = {income:0, expense:0, byCategory: {}};
+          for(const e of entries){
+            if(e.type==='income') t.income += e.amount; else t.expense += e.amount;
+            t.byCategory[e.category] = (t.byCategory[e.category]||0) + (e.type==='income'? e.amount : -e.amount);
+          }
+          t.balance = t.income - t.expense;
+          return t;
+        },[entries]);
+
+        const monthTotals = useMemo(()=>{
+          return filtered.reduce((acc,e)=>{ if(e.type==='income') acc.income += e.amount; else acc.expense += e.amount; return acc },{income:0,expense:0})
+        },[filtered]);
+
+        function handleAdd(e){
+          e.preventDefault();
+          const v = parseFloat(amount);
+          if(!v || v<=0) return alert('Enter a valid amount');
+          const entry = {id: editingId || uid(), type, amount: v, category, note, date}
+          if(editingId){ setEntries(prev => prev.map(it=> it.id===editingId ? entry : it)); setEditingId(null) }
+          else setEntries(prev=> [entry, ...prev]);
+          setAmount(''); setNote(''); setType('expense'); setCategory(SAMPLE_CATEGORIES[0]);
+        }
+
+        function startEdit(item){ setEditingId(item.id); setType(item.type); setAmount(item.amount); setCategory(item.category); setNote(item.note); setDate(item.date) }
+        function removeItem(id){ if(confirm('Delete this entry?')) setEntries(prev=> prev.filter(p=> p.id!==id)) }
+        function clearAll(){ if(confirm('Clear all data? This cannot be undone.')){ setEntries([]); localStorage.removeItem(LOCAL_KEY) } }
+
+        return (
+          <div className="app">
+            <main className="card">
+              <header>
+                <div>
+                  <h1>BudgetBuddy</h1>
+                  <div className="small">Simple, private budgeting — stored locally in your browser</div>
+                </div>
+                <div className="small muted">Month: <strong>{queryMonth}</strong></div>
+              </header>
+
+              <section className="balance card" style={{marginBottom:12}}>
+                <div className="row" style={{justifyContent:'space-between'}}>
+                  <div>
+                    <div className="small">Total balance</div>
+                    <div className="balance-amount">{formatCurrency(totals.balance)}</div>
+                    <div className="small muted">Income: {formatCurrency(totals.income)} · Expense: {formatCurrency(totals.expense)}</div>
+                  </div>
+                  <div style={{textAlign:'right'}}>
+                    <div className="small muted">This month</div>
+                    <div style={{fontWeight:700}}>{formatCurrency(monthTotals.income - monthTotals.expense)}</div>
+                    <div className="small muted">{monthTotals.income>0? `+ ${formatCurrency(monthTotals.income)} income` : ''} {monthTotals.expense>0? ` · ${formatCurrency(monthTotals.expense)} expense` : ''}</div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="card" style={{marginBottom:12}}>
+                <form onSubmit={handleAdd}>
+                  <div>
+                    <label>Type</label>
+                    <select value={type} onChange={e=>setType(e.target.value)}>
+                      <option value="expense">Expense</option>
+                      <option value="income">Income</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label>Amount (INR)</label>
+                    <input value={amount} onChange={e=>setAmount(e.target.value)} placeholder="e.g. 499.50" />
+                  </div>
+
+                  <div style={{gridColumn:'1/-1'}}>
+                    <label>Category</label>
+                    <select value={category} onChange={e=>setCategory(e.target.value)} style={{width:'100%'}}>
+                      {SAMPLE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+
+                  <div className="full">
+                    <label>Note (optional)</label>
+                    <input value={note} onChange={e=>setNote(e.target.value)} placeholder="eg. Lunch with friend" />
+                  </div>
+
+                  <div>
+                    <label>Date</label>
+                    <input type="date" value={date} onChange={e=>setDate(e.target.value)} />
+                  </div>
+
+                  <div className="actions">
+                    <button type="button" onClick={()=>{ setAmount(''); setNote(''); setEditingId(null) }} className="tiny">Reset</button>
+                    <button type="submit" className="primary">{editingId? 'Save' : 'Add'}</button>
+                  </div>
+                </form>
+              </section>
+
+              <section className="card">
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                  <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                    <label className="small muted">Filter month</label>
+                    <input type="month" value={queryMonth} onChange={e=>setQueryMonth(e.target.value)} />
+                    <button className="tiny" onClick={()=>{ setQueryMonth(new Date().toISOString().slice(0,7)) }}>this month</button>
+                  </div>
+                  <div style={{display:'flex',gap:8}}>
+                    <button className="tiny" onClick={()=>{ navigator.clipboard?.writeText(JSON.stringify(entries))?.then(()=> alert('Copied JSON to clipboard')) }}>Export JSON</button>
+                    <button className="tiny" onClick={clearAll}>Clear all</button>
+                  </div>
+                </div>
+
+                <div>
+                  {filtered.length===0 ? <div className="empty">No entries for this month</div> : filtered.map(it=> (
+                    <div className="entry" key={it.id}>
+                      <div style={{display:'flex',gap:12,alignItems:'center'}}>
+                        <div className="tag">{it.category}</div>
+                        <div className="meta">
+                          <div style={{fontWeight:700}}>{it.note || (it.type==='income'? 'Income':'Expense')}</div>
+                          <div className="small muted">{it.date}</div>
+                        </div>
+                      </div>
+                      <div style={{display:'flex',alignItems:'center',gap:8}}>
+                        <div className={`amount ${it.type==='income'? 'in':'out'}`}>{it.type==='income'? '+':'-'}{formatCurrency(it.amount)}</div>
+                        <div style={{display:'flex',gap:6}}>
+                          <button className="tiny" onClick={()=>startEdit(it)}>Edit</button>
+                          <button className="tiny" onClick={()=>removeItem(it.id)}>Delete</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+              </section>
+
+              <footer>
+                Tip: Data is stored locally in your browser's localStorage. Export before clearing or switching browsers.
+              </footer>
+            </main>
+
+            <aside className="sidebar">
+              <div className="card">
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <div>
+                    <div className="small">Overview</div>
+                    <div style={{fontSize:18,fontWeight:800}}>{formatCurrency(totals.balance)}</div>
+                  </div>
+                  <div style={{textAlign:'right'}}>
+                    <div className="small muted">Income</div>
+                    <div className="small" style={{fontWeight:700}}>{formatCurrency(totals.income)}</div>
+                    <div className="small muted">Expense</div>
+                    <div className="small" style={{fontWeight:700}}>{formatCurrency(totals.expense)}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="card">
+                <div className="small muted" style={{marginBottom:8}}>By category</div>
+                <div className="totals">
+                  {Object.keys(totals.byCategory).length===0 ? <div className="empty">No data</div> : Object.entries(totals.byCategory).map(([cat,val])=> (
+                    <div className="total-card" key={cat}>
+                      <div className="small muted">{cat}</div>
+                      <div style={{fontWeight:800}}>{formatCurrency(val)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="card">
+                <div className="small muted">Categories</div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:8}}>
+                  {SAMPLE_CATEGORIES.map(c=> <div key={c} className="tag">{c}</div>)}
+                </div>
+              </div>
+
+            </aside>
+          </div>
+        )
+      }
+
+      ReactDOM.createRoot(document.getElementById('root')).render(<App />)
+    </script>
+  </body>
+</html>
